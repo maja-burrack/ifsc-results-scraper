@@ -1,23 +1,35 @@
 import requests
 import pandas as pd
+import yaml
 
-url = "https://ifsc.results.info/api/v1/seasons/37"
-baseurl = "https://ifsc.results.info"
+from typing import List
+
+import os
+from dotenv import load_dotenv
+
+with open("config.yaml", "r") as f:
+    config = yaml.safe_load(f)
+
+load_dotenv()
+
+BASEURL = config['baseurl']
+COOKIE = os.getenv('COOKIE')
 
 headers = {
     "accept": "application/json",
     "accept-encoding": "gzip, deflate, br, zstd",
     "accept-language": "en-GB,en;q=0.6",
+    "cookie": COOKIE,
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36"
 }
 
-# TODO: add cookie to header
-
-def get_event_ids():
-    url = baseurl + "/api/v1/seasons/37"
+def get_event_ids(year=2025, headers=headers):
+    season_id = _map_year_to_season_id(year)
+    url = BASEURL + f"seasons/{season_id}"
     response = requests.get(url, headers=headers)
     
     r = response.json()
+    print(r)
     league_id = r['leagues'][0]['url'].split('/')[-1]
     
 
@@ -29,8 +41,13 @@ def get_event_ids():
     
     return event_ids
 
-def get_event_dcat_ids(event_id):
-    url = baseurl + f"/api/v1/events/{event_id}"
+def _map_year_to_season_id(year):
+    start_year = 1990
+    season_id = year - start_year + 2
+    return season_id 
+
+def get_event_dcat_ids(event_id, headers=headers):
+    url = BASEURL + f"events/{event_id}"
     response = requests.get(url, headers=headers).json()
     
     # get ids for dcats
@@ -40,24 +57,34 @@ def get_event_dcat_ids(event_id):
 
     return dcat_ids
 
-def get_event_results(event_id):
+def get_event_results(event_id, headers=headers):
     dcat_ids = get_event_dcat_ids(event_id)
     
     responses = {'event_id': event_id}
     for dcat_id in dcat_ids:
-        url = baseurl + f"/api/v1/events/{event_id}/result/{dcat_id}"
+        url = BASEURL + f"{event_id}/result/{dcat_id}"
         results = requests.get(url, headers=headers).json()
         results['dcat_id'] = dcat_id
         responses['results'] = results
     
     return responses
 
-def fetch_data():
-    event_ids = get_event_ids()
+def get_athlete_info(athlete_id: int, headers=headers):
+    url = BASEURL + f"athletes/{athlete_id}"
+    athlete_info = requests.get(url, headers=headers).json()
+    return athlete_info
+
+def get_athlete_info_multiple(athlete_ids: List[int], headers=headers):
+    athlete_info = {}
+    for athlete_id in athlete_ids:
+        athlete_info[athlete_id] = get_athlete_info(athlete_id, headers=headers)
+
+def fetch_data(year=2025, headers=headers):
+    event_ids = get_event_ids(year=year, headers=headers)
     
     all_event_results = []
     for event_id in event_ids:
-        event_results = get_event_results(event_id)
+        event_results = get_event_results(event_id=event_id, headers=headers)
         all_event_results.append(event_results)
     
     return all_event_results
@@ -85,6 +112,9 @@ def parse_data(data):
     df['score'] = df['rounds'].apply(lambda x: x['score'])
 
     df = df.drop(['ranking', 'rounds', 'results'], axis=1)
+    
+    athlete_ids = df['athlete_id'].unique().to_list()
+    athlete_info = get_athlete_info_multiple(athlete_ids=athlete_ids)
     
     return df
 
