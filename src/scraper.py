@@ -1,37 +1,40 @@
 import requests
 import pandas as pd
 import yaml
+import brotli
+import gzip
+import json
+import time
 
 from typing import List
 
 import os
 from dotenv import load_dotenv
 
-with open("config.yaml", "r") as f:
-    config = yaml.safe_load(f)
-
-load_dotenv()
-
-BASEURL = config['baseurl']
-COOKIE = os.getenv('COOKIE')
-
-headers = {
-    "accept": "application/json",
-    "accept-encoding": "gzip, deflate, br, zstd",
-    "accept-language": "en-GB,en;q=0.6",
-    "cookie": COOKIE,
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36"
-}
+def _decompress_response(response):
+    raw = response.content
+    encoding = response.headers.get("Content-Encoding")
+    
+    if encoding == "br":
+        decoded = brotli.decompress(raw)
+    elif encoding == "gzip":
+        decoded = gzip.decompress(raw)
+    else:
+        decoded = raw
+    return decoded
 
 def get_event_ids(year=2025, headers=headers):
     season_id = _map_year_to_season_id(year)
     url = BASEURL + f"seasons/{season_id}"
+    
     response = requests.get(url, headers=headers)
+    assert response.status_code == 200, f"Error code {response.status_code}!"
     
-    r = response.json()
-    print(r)
+    decoded = _decompress_response(response)
+    
+    r = json.loads(decoded)
+
     league_id = r['leagues'][0]['url'].split('/')[-1]
-    
 
     event_ids = [
         event['event_id']
@@ -48,7 +51,10 @@ def _map_year_to_season_id(year):
 
 def get_event_dcat_ids(event_id, headers=headers):
     url = BASEURL + f"events/{event_id}"
-    response = requests.get(url, headers=headers).json()
+    response = requests.get(url, headers=headers)
+    
+    response = _decompress_response(response)
+    response = json.loads(response)
     
     # get ids for dcats
     dcat_ids = [
@@ -62,8 +68,8 @@ def get_event_results(event_id, headers=headers):
     
     responses = {'event_id': event_id}
     for dcat_id in dcat_ids:
-        url = BASEURL + f"{event_id}/result/{dcat_id}"
-        results = requests.get(url, headers=headers).json()
+        url = BASEURL + f"/events/{event_id}/result/{dcat_id}"
+        results = json.loads(_decompress_response(requests.get(url, headers=headers)))
         results['dcat_id'] = dcat_id
         responses['results'] = results
     
@@ -71,13 +77,16 @@ def get_event_results(event_id, headers=headers):
 
 def get_athlete_info(athlete_id: int, headers=headers):
     url = BASEURL + f"athletes/{athlete_id}"
-    athlete_info = requests.get(url, headers=headers).json()
+    response= requests.get(url, headers=headers)
+    athlete_info = json.loads(_decompress_response(response))
     return athlete_info
 
 def get_athlete_info_multiple(athlete_ids: List[int], headers=headers):
     athlete_info = {}
     for athlete_id in athlete_ids:
         athlete_info[athlete_id] = get_athlete_info(athlete_id, headers=headers)
+        time.sleep(15)
+    return athlete_info
 
 def fetch_data(year=2025, headers=headers):
     event_ids = get_event_ids(year=year, headers=headers)
@@ -113,19 +122,69 @@ def parse_data(data):
 
     df = df.drop(['ranking', 'rounds', 'results'], axis=1)
     
-    athlete_ids = df['athlete_id'].unique().to_list()
-    athlete_info = get_athlete_info_multiple(athlete_ids=athlete_ids)
-    
     return df
 
-def transform_data(df):
+def transform_data(df, only_finalists=True):
     df = df.loc[df['dcat'].str.contains('boulder', case=False)]
     
     df['comp_id'] = df['event_id'].astype(str) + df['dcat_id'].astype(str)
     
-    athletes_in_final = df[df['round']=='Final'][['comp_id', 'athlete_id']].drop_duplicates()
-    df = df.merge(athletes_in_final, on=['comp_id', 'athlete_id'], how='inner')
+    if only_finalists:
+        athletes_in_final = df[df['round']=='Final'][['comp_id', 'athlete_id']].drop_duplicates()
+        df = df.merge(athletes_in_final, on=['comp_id', 'athlete_id'], how='inner')
     
     df = df.drop('status', axis=1)
     
+    df = _enrich_with_athlete_data(df)
+    
     return df
+
+def _enrich_with_athlete_data(df):
+    athlete_ids = df['athlete_id'].unique().tolist()
+    athlete_info = get_athlete_info_multiple(athlete_ids=athlete_ids)
+    
+    athlete_df = pd.DataFrame(athlete_info.values())
+    
+    athlete_df.rename({'id': 'athlete_id'}, axis=1, inplace=True)
+    
+    athlete_df['first_season'] = athlete_df['all_results'].apply(lambda x: min([int(i['season']) for i in x]))
+    
+    athlete_df = athlete_df.loc[:, ["athlete_id", "birthday", "gender", "first_season"]]
+    
+    df_enriched = df.merge(athlete_df, on="athlete_id", how='left')
+    
+    return df_enriched
+
+    
+if __name__ == "__main__":
+    
+    with open("../config.yaml", "r") as f:
+        config = yaml.safe_load(f)
+
+    load_dotenv()
+
+    BASEURL = config['baseurl']
+    COOKIE = os.getenv('COOKIE')
+
+    headers = {
+        "accept": "application/json",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-language": "en-GB,en;q=0.6",
+        "cookie": COOKIE,
+        "referer": "https://ifsc.results.info/",
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+    }
+    
+    YEAR = config['year']
+    data = fetch_data(year=YEAR)
+    
+    df = parse_data(data)
+    df_transformed = transform_data(df, only_finalists=True)
+
+    folder_dest = "../data"
+    if not os.path.isdir(folder_dest):
+        os.makedirs(folder_dest)
+        
+    output_file_name = f"{folder_dest}/ifsc_boulder_results_{YEAR}.csv"
+    df_transformed.to_csv(output_file_name)
+      
