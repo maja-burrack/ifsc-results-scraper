@@ -58,7 +58,6 @@ class IFSCResultsScraper:
             else:
                 decoded = raw
         except Exception as e:
-            print(f"Decompression failed: {e}. Falling back to raw content.")
             decoded = raw
         return decoded
 
@@ -85,12 +84,14 @@ class IFSCResultsScraper:
     def get_event_results(self, event_id: int):
         dcat_ids = self.get_event_dcat_ids(event_id)
         
-        responses = {'event_id': event_id}
+        results_lst = []
         for dcat_id in dcat_ids:
             url = self.baseurl + f"/events/{event_id}/result/{dcat_id}"
             results = json.loads(self._decompress_response(requests.get(url, headers=self.headers)))
             results['dcat_id'] = dcat_id
-            responses['results'] = results
+            results_lst.append(results)
+        
+        responses = {'event_id': event_id, 'results': results_lst}
         
         return responses
 
@@ -121,6 +122,7 @@ class IFSCResultsScraper:
     def parse_data(data):
         df = pd.DataFrame(data)
         
+        df = df.explode('results')
         df['event_name'] = df['results'].apply(lambda x: x['event'])
         df['dcat_id'] = df['results'].apply(lambda x: x['dcat_id'])
         df['dcat'] = df['results'].apply(lambda x: x['dcat'])
