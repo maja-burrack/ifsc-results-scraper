@@ -11,14 +11,6 @@ from typing import List
 import os
 from dotenv import load_dotenv
 
-headers = {
-    "accept": "application/json",
-    "accept-encoding": "gzip, deflate, br, zstd",
-    "accept-language": "en-GB,en;q=0.6",
-    "referer": "https://ifsc.results.info/",
-    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
-}
-
 def _decompress_response(response):
     raw = response.content
     encoding = response.headers.get("Content-Encoding")
