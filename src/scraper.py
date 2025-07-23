@@ -11,6 +11,14 @@ from typing import List
 import os
 from dotenv import load_dotenv
 
+headers = {
+    "accept": "application/json",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-GB,en;q=0.6",
+    "referer": "https://ifsc.results.info/",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
+}
+
 def _decompress_response(response):
     raw = response.content
     encoding = response.headers.get("Content-Encoding")
@@ -23,7 +31,7 @@ def _decompress_response(response):
         decoded = raw
     return decoded
 
-def get_event_ids(year=2025, headers=headers):
+def get_event_ids(year, headers):
     season_id = _map_year_to_season_id(year)
     url = BASEURL + f"seasons/{season_id}"
     
@@ -49,7 +57,7 @@ def _map_year_to_season_id(year):
     season_id = year - start_year + 2
     return season_id 
 
-def get_event_dcat_ids(event_id, headers=headers):
+def get_event_dcat_ids(event_id, headers):
     url = BASEURL + f"events/{event_id}"
     response = requests.get(url, headers=headers)
     
@@ -63,7 +71,7 @@ def get_event_dcat_ids(event_id, headers=headers):
 
     return dcat_ids
 
-def get_event_results(event_id, headers=headers):
+def get_event_results(event_id, headers):
     dcat_ids = get_event_dcat_ids(event_id)
     
     responses = {'event_id': event_id}
@@ -75,13 +83,13 @@ def get_event_results(event_id, headers=headers):
     
     return responses
 
-def get_athlete_info(athlete_id: int, headers=headers):
+def get_athlete_info(athlete_id: int, headers):
     url = BASEURL + f"athletes/{athlete_id}"
     response= requests.get(url, headers=headers)
     athlete_info = json.loads(_decompress_response(response))
     return athlete_info
 
-def get_athlete_info_multiple(athlete_ids: List[int], headers=headers):
+def get_athlete_info_multiple(athlete_ids: List[int], headers):
     athlete_info = {}
     for athlete_id in athlete_ids:
         athlete_info[athlete_id] = get_athlete_info(athlete_id, headers=headers)
@@ -164,19 +172,13 @@ if __name__ == "__main__":
     load_dotenv()
 
     BASEURL = config['baseurl']
-    COOKIE = os.getenv('COOKIE')
-
-    headers = {
-        "accept": "application/json",
-        "accept-encoding": "gzip, deflate, br, zstd",
-        "accept-language": "en-GB,en;q=0.6",
-        "cookie": COOKIE,
-        "referer": "https://ifsc.results.info/",
-        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36"
-    }
-    
     YEAR = config['year']
-    data = fetch_data(year=YEAR)
+    COOKIE = os.getenv('COOKIE')
+    
+    headers = config['headers']
+    headers['cookie'] = COOKIE
+    
+    data = fetch_data(year=YEAR, headers=headers)
     
     df = parse_data(data)
     df_transformed = transform_data(df, only_finalists=True)
