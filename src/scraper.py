@@ -105,7 +105,6 @@ class IFSCResultsScraper:
         athlete_info = {}
         for athlete_id in athlete_ids:
             athlete_info[athlete_id] = self.get_athlete_info(athlete_id)
-            time.sleep(15)
         return athlete_info
 
     def fetch_data(self, year=2025):
@@ -127,6 +126,7 @@ class IFSCResultsScraper:
         df['dcat_id'] = df['results'].apply(lambda x: x['dcat_id'])
         df['dcat'] = df['results'].apply(lambda x: x['dcat'])
         df['status'] = df['results'].apply(lambda x: x['status'])
+        df['status_as_of'] = df['results'].apply(lambda x: x['status_as_of'])
         
         df = df[df['status']=='finished']
         
@@ -136,11 +136,13 @@ class IFSCResultsScraper:
         df['athlete_id'] = df['ranking'].apply(lambda x: x['athlete_id'])
         df['athlete_name'] = df['ranking'].apply(lambda x: x['name'])
         df['athlete_country'] = df['ranking'].apply(lambda x: x['country'])
+        df['comp_rank'] = df['ranking'].apply(lambda x: x['rank'])
         df['rounds'] = df['ranking'].apply(lambda x: x['rounds'])
         
         df = df.explode('rounds')
         df['round'] = df['rounds'].apply(lambda x: x['round_name'])
         df['score'] = df['rounds'].apply(lambda x: x['score'])
+        df['round_rank'] = df['rounds'].apply(lambda x: x['rank'])
 
         df = df.drop(['ranking', 'rounds', 'results'], axis=1)
         
@@ -163,6 +165,7 @@ class IFSCResultsScraper:
 
     def _enrich_with_athlete_data(self, df):
         athlete_ids = df['athlete_id'].unique().tolist()
+    
         athlete_info = self.get_athlete_info_multiple(athlete_ids=athlete_ids)
         
         athlete_df = pd.DataFrame(athlete_info.values())
@@ -171,7 +174,7 @@ class IFSCResultsScraper:
         
         athlete_df['first_season'] = athlete_df['all_results'].apply(lambda x: min([int(i['season']) for i in x]))
         
-        athlete_df = athlete_df.loc[:, ["athlete_id", "birthday", "gender", "first_season"]]
+        athlete_df = athlete_df.loc[:, ["athlete_id", "birthday", "gender", "first_season", "height", "arm_span"]]
         
         df_enriched = df.merge(athlete_df, on="athlete_id", how='left')
         
@@ -203,5 +206,5 @@ if __name__ == "__main__":
         os.makedirs(folder_dest)
         
     output_file_name = f"{folder_dest}/ifsc_boulder_results_{YEAR}.csv"
-    df_transformed.to_csv(output_file_name)
+    df_transformed.to_csv(output_file_name, index=False)
       
